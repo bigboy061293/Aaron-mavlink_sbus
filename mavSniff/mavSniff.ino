@@ -18,6 +18,9 @@ uint16_t vel = 0; //cm/s
 int16_t xacc = 0; //
 int16_t yacc = 0; //
 int16_t zacc = 0; //
+int16_t xgyro = 0; //
+int16_t ygyro = 0; //
+int16_t zgyro = 0; //
 uint16_t hdg = 0; //cdeg
 uint32_t custom_mode = 0;
 uint8_t fix_type = 0;
@@ -141,6 +144,9 @@ void comm_receive_from_ardupilot() {
             xacc = raw_imu.xacc;
             yacc = raw_imu.yacc;
             zacc = raw_imu.zacc;
+            xgyro = raw_imu.xgyro;
+            ygyro = raw_imu.ygyro;
+            zgyro = raw_imu.zgyro;
             break;
           }     
         case 30: // ATTITUDE
@@ -223,7 +229,18 @@ void loop() {
 
    Serial.print("AccZ: ");
    Serial.println(zacc);
+   
+   Serial.print("Xgyro: ");
+   Serial.println(xgyro);
 
+
+   Serial.print("Ygyro: ");
+   Serial.println(ygyro);
+
+
+   Serial.print("Zgyro: ");
+   Serial.println(zgyro);
+   
    Serial.print("Heading: ");
    Serial.println(hdg);
 
