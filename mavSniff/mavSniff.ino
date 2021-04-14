@@ -1,14 +1,16 @@
-#include <Arduino.h>
+//#include <Arduino.h>
+//#include <TeensyThreads.h>
 #include "common/mavlink.h"
 //#include "ardupilotmega/mavlink.h"
-#include "sbus.h"
-#define SERIAL_GCS Serial1 
-#define SERIAL_ARDUPILOT Serial2
-#define SERIAL_GCS_BAUD 9600
+//#include "sbus.h"
+#define SERIAL_GCS Serial2
+#define SERIAL_ARDUPILOT Serial1
+#define SERIAL_GCS_BAUD 115200
 #define SERIAL_ARDUPILOT_BAUD 115200
-std::array<uint16_t, 16> channels;
+#define MAX_MAVLINK_MESSAGE 1000
+//std::array<uint16_t, 16> channels;
 const int LED = 13;
-SbusTx sbus_tx(&Serial2);
+//SbusTx sbus_tx(&Serial2);
 int16_t current_battery = 0; //cA
 uint16_t voltage_battery = 0; //mV
 int32_t alt = 0; //mm
@@ -25,6 +27,7 @@ uint16_t hdg = 0; //cdeg
 uint32_t custom_mode = 0;
 uint8_t fix_type = 0;
 int32_t current_consumed = 0; //mAh
+uint8_t checkRequestMsgOK[MAX_MAVLINK_MESSAGE];
 /*
  * given https://mavlink.io/en/messages/ardupilotmega.html
  * and https://mavlink.io/en/messages/common.html
@@ -54,6 +57,10 @@ CapacityUsed.number = inav.getCapacityUsed(); -> BATTERY_STATUS ( #147 ) current
 FlightMode.number = inav.getFlightMode(); -> HEARTBEAT ( #0 ) custom_mode
 GpsState.number = inav.getGpsState(); -> GPS_RAW_INT ( #24 ) vel fix_type
  */
+void initCheckRequestMsgOK(){
+  for (int i = 0; i < MAX_MAVLINK_MESSAGE; i++) 
+    checkRequestMsgOK[i] = 0;
+}
 void comm_receive_from_gcs() {
   mavlink_message_t msg;
   mavlink_status_t statust;
@@ -71,23 +78,23 @@ void comm_receive_from_gcs() {
           break;
         case 36:  // #36: Servo Out Raw
           {
-            digitalWrite(13,1-digitalRead(13));
-            mavlink_servo_output_raw_t servo_out_raw;
-            mavlink_msg_servo_output_raw_decode(&msg, &servo_out_raw);
-            channels[0] = (uint16_t)servo_out_raw.servo1_raw;
-            channels[1] = servo_out_raw.servo2_raw;
-            channels[2] = servo_out_raw.servo3_raw;
-            channels[3] = servo_out_raw.servo4_raw;
-            channels[4] = servo_out_raw.servo5_raw;
-            channels[5] = servo_out_raw.servo6_raw;
-            channels[6] = servo_out_raw.servo7_raw;
-            channels[7] = servo_out_raw.servo8_raw;
-            //print out to check wheter
-            for (int i = 0; i < 8; i++){
-                  Serial.print(channels[i]);
-                  Serial.print(',');
-              }
-            Serial.println();
+//            digitalWrite(13,1-digitalRead(13));
+//            mavlink_servo_output_raw_t servo_out_raw;
+//            mavlink_msg_servo_output_raw_decode(&msg, &servo_out_raw);
+//            channels[0] = (uint16_t)servo_out_raw.servo1_raw;
+//            channels[1] = servo_out_raw.servo2_raw;
+//            channels[2] = servo_out_raw.servo3_raw;
+//            channels[3] = servo_out_raw.servo4_raw;
+//            channels[4] = servo_out_raw.servo5_raw;
+//            channels[5] = servo_out_raw.servo6_raw;
+//            channels[6] = servo_out_raw.servo7_raw;
+//            channels[7] = servo_out_raw.servo8_raw;
+//            //print out to check wheter
+//            for (int i = 0; i < 8; i++){
+//                  Serial.print(channels[i]);
+//                  Serial.print(',');
+//              }
+//            Serial.println();
           }
           break;
         case 4:  // #0 Ping message
@@ -101,20 +108,83 @@ void comm_receive_from_gcs() {
     }
   }
 }
+
+// Sending the request to Ardupilot
+
+void requestMessages(uint16_t messageID, uint16_t usStream){
+  mavlink_message_t msg;
+  mavlink_status_t statust;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+  uint16_t len = 0;
+  while (1){
+    mavlink_msg_command_long_pack(255,  255, &msg, 1, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, messageID, usStream, 0, 0, 0, 0, 0);
+    len = mavlink_msg_to_send_buffer(buf, &msg);
+    SERIAL_ARDUPILOT.write(buf,len);
+    while(SERIAL_ARDUPILOT.available()>0) {
+    //Serial.print('-');
+      uint8_t c = SERIAL_ARDUPILOT.read();
+        if(mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &statust)) {
+          //Serial.println(msg.msgid);
+          //if (msg.msgid == 77){
+          //  mavlink_command_ack_t command_ack;
+          // mavlink_msg_command_ack_decode(&msg, &command_ack);
+          // Serial.println(command_ack.command);
+          // Serial.println(command_ack.result);
+          //}
+          if (msg.msgid == messageID){
+              checkRequestMsgOK[messageID] = 1;
+              Serial.print("Request ");
+              Serial.print(messageID);
+              Serial.println(" OK!");
+              return;
+            }
+            else{
+              mavlink_msg_command_long_pack(255,  255, &msg, 1, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, messageID, usStream, 0, 0, 0, 0, 0);
+              len = mavlink_msg_to_send_buffer(buf, &msg);
+              SERIAL_ARDUPILOT.write(buf,len);
+            }
+        }
+      }
+    }
+}
 void comm_receive_from_ardupilot() {
   mavlink_message_t msg;
   mavlink_status_t statust;
 
   while(SERIAL_ARDUPILOT.available()>0) {
+    //Serial.print('-');
     uint8_t c = SERIAL_ARDUPILOT.read();
-    if(mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &statust)) {
-
+    if(mavlink_parse_char(MAVLINK_COMM_1, c, &msg, &statust)) {
+      //Serial.println(msg.msgid);
+      //return;
+      //Serial.println(msg.msgid);
+      //if (statust == 1){
+        
+      
       switch(msg.msgid) {
+        case 77:
+        {
+           mavlink_command_ack_t command_ack;
+           mavlink_msg_command_ack_decode(&msg, &command_ack);
+           Serial.println(command_ack.command);
+           Serial.println(command_ack.result);
+           //if (command_ack.result == 0) {
+           // checkRequestMsgOK[command_ack.command] = 1;
+           // Serial.print("Request ");
+           // Serial.print(command_ack.command);
+           // Serial.println(" failed!");
+            //}
+           
+           
+           break;
+        }
         case 0:  // #0: Heartbeat
           {
             mavlink_heartbeat_t heartbeat;
             mavlink_msg_heartbeat_decode(&msg, &heartbeat);
             custom_mode = heartbeat.custom_mode;
+            //Serial.println("HBRX");
+            //Serial2.flush();
             break;
           }
         case 1: // SYS_STATUS
@@ -123,6 +193,7 @@ void comm_receive_from_ardupilot() {
             mavlink_msg_sys_status_decode(&msg, &sys_status);
             voltage_battery = sys_status.voltage_battery;
             voltage_battery = sys_status.current_battery;
+            //Serial.println(voltage_battery);
             break;
           }
         case 24: // GPS_RAW_INT
@@ -147,12 +218,21 @@ void comm_receive_from_ardupilot() {
             xgyro = raw_imu.xgyro;
             ygyro = raw_imu.ygyro;
             zgyro = raw_imu.zgyro;
+            //Serial2.flush();
+            //Serial.print(xgyro);
+            //Serial.print(',');
+            //Serial.print(ygyro);
+            //Serial.print(',');
+            //Serial.println(zgyro);
+
             break;
           }     
         case 30: // ATTITUDE
           {
             mavlink_attitude_t attitude;
             mavlink_msg_attitude_decode(&msg, &attitude);
+          
+            //Serial.println(attitude.yaw);
             break;
           }                 
           //
@@ -177,6 +257,7 @@ void comm_receive_from_ardupilot() {
        default:
           break;
       }
+      
     }
   }
 }
@@ -186,13 +267,26 @@ void setup() {
   Serial.begin(115200);
   //SERIAL_GCS.begin(SERIAL_GCS_BAUD);
   SERIAL_ARDUPILOT.begin(SERIAL_GCS_BAUD);
-  sbus_tx.Begin();
+//  sbus_tx.Begin();
   
   delay(500);
   for (int i = 0; i < 16; i++){
-    channels[i] = 1000;
+    //channels[i] = 1000;
   }
-  
+  requestMessages(1,100000);
+  delay(10);
+  requestMessages(24,10000); //GPS_RAW_INT : 10ms (10000 us)
+  delay(10);
+  requestMessages(27,10000); //RAW_IMU: 10ms (10000 us)
+  delay(10);
+  //requestMessages(30,100000); //
+  //delay(10);
+  requestMessages(33,10000); //GLOBAL_POSITION_INT : 10ms (10000 us)
+  delay(10);
+  //requestMessages(147,100000);
+  //delay(100);
+
+  //threads.addThread(comm_receive_from_ardupilot, 2);
 }
 
 int count = 0;
@@ -252,9 +346,12 @@ void loop() {
    Serial.println(custom_mode);  
 
    Serial.print("GpsState: ");
-   Serial.println(fix_type);        
+   Serial.println(fix_type);     
+   delay(10);   
+  
+
    //sbus_tx.tx_channels(channels);
    //sbus_tx.Write();
-   //delay(10);
+   //delay(1);
   
 }
