@@ -251,16 +251,42 @@ void comm_receive_from_ardupilot() {
             current_consumed = battery_status.current_consumed;
             break;
           }
-        
-          
-       
+
        default:
           break;
       }
-      
     }
   }
 }
+
+void level_calibration(){
+  mavlink_message_t msg;
+  mavlink_status_t statust;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+  uint16_t len = 0;
+  while(1){
+    mavlink_msg_command_long_pack(255,  255, &msg, 1, 1, MAV_CMD_PREFLIGHT_CALIBRATION  , 0, 0, 0, 0, 0, 2, 0, 0);
+    len = mavlink_msg_to_send_buffer(buf, &msg);
+    SERIAL_ARDUPILOT.write(buf,len);
+    while(SERIAL_ARDUPILOT.available()>0) {
+      uint8_t c = SERIAL_ARDUPILOT.read();
+        if(mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &statust)) {
+          //Serial.println(msg.msgid);
+          if (msg.msgid == 77){
+           mavlink_command_ack_t command_ack;
+           mavlink_msg_command_ack_decode(&msg, &command_ack);
+      
+            if ((command_ack.result == 0) && (command_ack.command == 241)){
+              Serial.println("Level calibration done!");
+              return;
+              //while(1);
+          }
+          }
+          }
+  }
+}
+}
+
 void setup() {
   pinMode(LED, OUTPUT);
   delay(1000);
@@ -273,6 +299,10 @@ void setup() {
   for (int i = 0; i < 16; i++){
     //channels[i] = 1000;
   }
+  
+  Serial.println("Level caibration starts:");
+  level_calibration();
+  
   requestMessages(1,100000);
   delay(10);
   requestMessages(24,10000); //GPS_RAW_INT : 10ms (10000 us)
@@ -294,6 +324,10 @@ int count = 0;
 void loop() {
 
    //comm_receive_from_gcs();
+
+
+  //
+   
    comm_receive_from_ardupilot();
    Serial.print("Current: ");
    Serial.println(current_battery);
